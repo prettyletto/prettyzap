@@ -47,6 +47,31 @@ test("parsePalette reads Omarchy colors.toml values", () => {
   assert.equal(palette.green, "#9ece6a");
 });
 
+test("parsePalette falls back to ANSI Omarchy colors when semantic keys are absent", () => {
+  const palette = parsePalette(`accent = "#525e5a"
+foreground = "#D6D0C5"
+background = "#050505"
+selection_background = "#D6D0C5"
+color1 = "#da614e"
+color2 = "#8B9388"
+color3 = "#51605b"
+color4 = "#75897F"
+color5 = "#C2A46D"
+`);
+  assert.ok(palette);
+  assert.equal(palette.background, "#050505");
+  assert.equal(palette.darkBackground, "#050505");
+  assert.equal(palette.darkerBackground, "#050505");
+  assert.equal(palette.foreground, "#D6D0C5");
+  assert.equal(palette.muted, "#51605b");
+  assert.equal(palette.accent, "#525e5a");
+  assert.equal(palette.selection, "#D6D0C5");
+  assert.equal(palette.red, "#da614e");
+  assert.equal(palette.yellow, "#51605b");
+  assert.equal(palette.green, "#8B9388");
+  assert.equal(palette.blue, "#75897F");
+});
+
 test("parsePalette detects light mode", () => {
   const palette = parsePalette('mode = "light"\nbackground = "#ffffff"\nforeground = "#111111"\nmuted = "#666666"\naccent = "#0000ff"\nselection = "#dddddd"\n');
   assert.ok(palette);

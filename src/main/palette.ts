@@ -145,10 +145,10 @@ export function effectivePalette(): OmarchyPalette | undefined {
 }
 
 /**
- * Parse Omarchy's colors.toml format. Required keys: mode (or default dark),
- * background, dark_background (fallback background), darker_background
- * (fallback dark_background), foreground, muted, accent, selection. The
- * red/yellow/green/blue accents fall back to accent/foreground.
+ * Parse Omarchy's colors.toml format. Semantic keys are preferred. Themes
+ * that only expose terminal ANSI colors are supported as a fallback, which
+ * keeps the normal Omarchy palette contract authoritative when both formats
+ * are present.
  */
 export function parsePalette(source: string): OmarchyPalette | undefined {
   const entries = new Map<string, string>();
@@ -159,13 +159,14 @@ export function parsePalette(source: string): OmarchyPalette | undefined {
 
   const value = (key: keyof typeof PALETTE_KEYS): string | undefined =>
     entries.get(PALETTE_KEYS[key]);
-  const background = value("background");
-  const darkBackground = value("darkBackground") ?? background;
-  const darkerBackground = value("darkerBackground") ?? darkBackground;
-  const foreground = value("foreground");
-  const muted = value("muted");
-  const accent = value("accent");
-  const selection = value("selection");
+  const ansi = (index: number): string | undefined => entries.get(`color${index}`);
+  const background = value("background") ?? ansi(0);
+  const darkBackground = value("darkBackground") ?? ansi(0) ?? background;
+  const darkerBackground = value("darkerBackground") ?? ansi(0) ?? darkBackground;
+  const foreground = value("foreground") ?? ansi(7);
+  const muted = value("muted") ?? ansi(8) ?? ansi(3) ?? foreground;
+  const accent = value("accent") ?? ansi(4) ?? ansi(6) ?? foreground;
+  const selection = value("selection") ?? entries.get("selection_background") ?? ansi(7) ?? accent;
   if (!background || !darkBackground || !darkerBackground || !foreground || !muted || !accent || !selection) {
     return undefined;
   }
@@ -179,10 +180,10 @@ export function parsePalette(source: string): OmarchyPalette | undefined {
     muted,
     accent,
     selection,
-    red: value("red") ?? accent,
-    yellow: value("yellow") ?? foreground,
-    green: value("green") ?? accent,
-    blue: value("blue") ?? accent,
+    red: value("red") ?? ansi(1) ?? accent,
+    yellow: value("yellow") ?? ansi(3) ?? foreground,
+    green: value("green") ?? ansi(2) ?? accent,
+    blue: value("blue") ?? ansi(4) ?? accent,
   };
 }
 
