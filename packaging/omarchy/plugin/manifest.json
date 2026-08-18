@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "prettyletto.prettyzap",
   "name": "PrettyZap",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "author": "PrettyZap",
   "license": "MIT",
   "description": "Native Omarchy bar control for PrettyZap: open, hide, theme, and quit WhatsApp Web.",

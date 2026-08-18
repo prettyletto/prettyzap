@@ -153,7 +153,7 @@ export function effectivePalette(): OmarchyPalette | undefined {
 export function parsePalette(source: string): OmarchyPalette | undefined {
   const entries = new Map<string, string>();
   for (const line of source.split(/\r?\n/)) {
-    const match = line.match(/^\s*([a-z_]+)\s*=\s*"(#[0-9a-fA-F]{6,8})"\s*(?:#.*)?$/);
+    const match = line.match(/^\s*([a-z][a-z0-9_]*)\s*=\s*"(#[0-9a-fA-F]{6,8})"\s*(?:#.*)?$/);
     if (match && HEX_COLOR.test(match[2])) entries.set(match[1], match[2]);
   }
 
