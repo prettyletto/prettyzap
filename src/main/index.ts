@@ -30,6 +30,7 @@ import {
 } from "./status";
 import { startDesktopControl, type DesktopControl } from "./desktop-control";
 import { isWindowPresented, resolveToggleAction } from "./window-state";
+import { isMediaAccessAllowed } from "./media-permissions";
 import { notificationPolicyScript, parseUnreadCount } from "./unread-count";
 import {
   DEFAULT_CUSTOM_PALETTE,
@@ -286,11 +287,13 @@ async function quitPrettyZap(): Promise<void> {
   app.quit();
 }
 
-function settingsSnapshot(): Pick<ShellState, "drawerCollapsed" | "whatsappTheme" | "notificationsEnabled" | "shortcuts" | "signOutOnQuit"> {
+function settingsSnapshot(): Pick<ShellState, "drawerCollapsed" | "whatsappTheme" | "notificationsEnabled" | "microphoneEnabled" | "cameraEnabled" | "shortcuts" | "signOutOnQuit"> {
   return {
     drawerCollapsed: shellState.drawerCollapsed,
     whatsappTheme: shellState.whatsappTheme,
     notificationsEnabled: shellState.notificationsEnabled,
+    microphoneEnabled: shellState.microphoneEnabled,
+    cameraEnabled: shellState.cameraEnabled,
     shortcuts: { ...shellState.shortcuts },
     signOutOnQuit: shellState.signOutOnQuit,
   };
@@ -317,6 +320,10 @@ function settingsPage(): string {
 <label>Blue<span class="color-row"><input type="color" data-color-key="blue" value="#e68e0d"><input type="text" data-color-hex="blue" value="#e68e0d" spellcheck="false" autocomplete="off"></span></label>
 </div><div class="inline-actions"><button id="resetColors">Reset to defaults</button><span class="hint" style="margin:0">Changes apply to WhatsApp immediately.</span></div></section>
 <section class="card"><h2>Behavior</h2><label class="check"><input id="drawerCollapsed" type="checkbox"> Start the chat drawer collapsed</label><div class="hint">This takes effect the next time the app opens.</div><label class="check" style="margin-top:14px"><input id="signOutOnQuit" type="checkbox"> Sign out of WhatsApp when PrettyZap quits</label><div class="hint">Wipes the saved session (cookies, local and indexed storage) on exit so nothing recoverable remains on disk. You will need to scan the WhatsApp QR code again after each quit.</div></section>
+<section class="card"><h2>Media permissions</h2>
+<label class="check"><input id="microphoneEnabled" type="checkbox"> Allow microphone access</label><div class="hint">Used for voice messages and voice/video calls.</div>
+<label class="check" style="margin-top:14px"><input id="cameraEnabled" type="checkbox"> Allow camera access</label><div class="hint">Used for video calls and camera capture.</div>
+<div class="hint">Changes apply to future media requests. Active calls keep their current devices until restarted.</div></section>
 <section class="card"><h2>Shortcuts</h2><div class="grid">
 <label>Toggle drawer<input type="text" data-key="toggleDrawer" autocomplete="off"></label><label>Focus chat search<input type="text" data-key="search" autocomplete="off"></label>
 <label>Open Archived<input type="text" data-key="openArchived" autocomplete="off"></label><label>Focus composer<input type="text" data-key="focusComposer" autocomplete="off"></label>
@@ -346,7 +353,23 @@ hexFields.forEach(h=>h.addEventListener('change',()=>{const v=h.value.trim().toL
 modeSelect.addEventListener('change',()=>{paletteModeValue=modeSelect.value;pushPalette()});
 colorsPin.addEventListener('change',()=>{api.setPalettePinned(colorsPin.checked).then(p=>{applyPalette(p);setStatus(colorsPin.checked?'Colors pinned: theme changes are ignored':'Now following the Omarchy theme','success');return refreshAppearanceCheckbox()}).catch(()=>{colorsPin.checked=!colorsPin.checked;setStatus('Could not change color pinning','error')})});
 resetColors.addEventListener('click',()=>{resetColors.disabled=true;api.resetPalette().then(p=>{applyPalette(p);setStatus('Colors reset','success');return refreshAppearanceCheckbox()}).catch(()=>setStatus('Could not reset colors','error')).finally(()=>{resetColors.disabled=!colorsEditable})});
-api.getPalette().then(applyPalette).catch(()=>{colorsNote.textContent='Unable to load colors.';setColorsEditable(false)});</script></body></html>`;
+api.getPalette().then(applyPalette).catch(()=>{colorsNote.textContent='Unable to load colors.';setColorsEditable(false)});
+const microphoneToggle=document.getElementById('microphoneEnabled');
+const cameraToggle=document.getElementById('cameraEnabled');
+const applyMediaPermissions=(s)=>{microphoneToggle.checked=s.microphoneEnabled!==false;cameraToggle.checked=s.cameraEnabled!==false};
+const saveMediaPermissions=()=>{
+  microphoneToggle.disabled=true;cameraToggle.disabled=true;
+  api.update({microphoneEnabled:microphoneToggle.checked,cameraEnabled:cameraToggle.checked})
+    .then(s=>{applyMediaPermissions(s);setStatus('Media permissions saved','success')})
+    .catch(()=>{setStatus('Could not save media permissions','error');return api.get().then(applyMediaPermissions)})
+    .finally(()=>{microphoneToggle.disabled=false;cameraToggle.disabled=false});
+};
+microphoneToggle.addEventListener('change',saveMediaPermissions);
+cameraToggle.addEventListener('change',saveMediaPermissions);
+api.get().then(applyMediaPermissions).catch(()=>{
+  microphoneToggle.disabled=true;cameraToggle.disabled=true;
+  setStatus('Unable to load media permissions','error');
+});</script></body></html>`;
 }
 
 function openSettings(focus?: "colors"): void {
@@ -704,7 +727,6 @@ function createWindow(): void {
   // so a compromised page cannot reach geolocation, USB/HID/serial, MIDI,
   // screen capture, or the system clipboard reader.
   const grantedPermissions = new Set<string>([
-    "media", // voice/video calls
     "fullscreen", // video playback
     "clipboard-sanitized-write", // native paste button
   ]);
@@ -712,13 +734,21 @@ function createWindow(): void {
     permission === "notifications"
       ? shellState.notificationsEnabled
       : grantedPermissions.has(permission);
-  whatsappSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    if (!allowedPermission(permission)) {
+  whatsappSession.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+    const mediaTypes = (details as { mediaTypes?: string[] }).mediaTypes ?? [];
+    const allowed = permission === "media"
+      ? isMediaAccessAllowed(shellState, mediaTypes)
+      : allowedPermission(permission);
+    if (!allowed) {
       console.warn("PrettyZap denied WhatsApp Web permission request", permission);
     }
-    callback(allowedPermission(permission));
+    callback(allowed);
   });
-  whatsappSession.setPermissionCheckHandler((_webContents, permission) => {
+  whatsappSession.setPermissionCheckHandler((_webContents, permission, _requestingOrigin, details) => {
+    if (permission === "media") {
+      const mediaType = (details as { mediaType?: string }).mediaType;
+      return isMediaAccessAllowed(shellState, mediaType ? [mediaType] : []);
+    }
     return allowedPermission(permission);
   });
   let rendererRecoveryAttempts = 0;
@@ -860,6 +890,12 @@ ipcMain.handle(SETTINGS_UPDATE_CHANNEL, (event, value: unknown) => {
   }
   if (typeof candidate.notificationsEnabled === "boolean") {
     setNotificationsEnabled(candidate.notificationsEnabled);
+  }
+  if (typeof candidate.microphoneEnabled === "boolean") {
+    shellState.microphoneEnabled = candidate.microphoneEnabled;
+  }
+  if (typeof candidate.cameraEnabled === "boolean") {
+    shellState.cameraEnabled = candidate.cameraEnabled;
   }
   if (typeof candidate.signOutOnQuit === "boolean") {
     shellState.signOutOnQuit = candidate.signOutOnQuit;

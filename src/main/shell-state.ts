@@ -9,6 +9,10 @@ export interface ShellState {
   drawerCollapsed: boolean;
   whatsappTheme: "whatsapp" | "system";
   notificationsEnabled: boolean;
+  /** Allow WhatsApp Web to request microphone access. */
+  microphoneEnabled: boolean;
+  /** Allow WhatsApp Web to request camera access. */
+  cameraEnabled: boolean;
   /** Wipe the WhatsApp session (cookies, local/indexed storage) on quit. */
   signOutOnQuit: boolean;
   /** Keep the custom palette even when the Omarchy theme changes. */
@@ -35,6 +39,8 @@ export const DEFAULT_SHELL_STATE: ShellState = {
   drawerCollapsed: true,
   whatsappTheme: "whatsapp",
   notificationsEnabled: true,
+  microphoneEnabled: true,
+  cameraEnabled: true,
   signOutOnQuit: false,
   colorsPinned: false,
   shortcuts: {
@@ -95,6 +101,8 @@ export function normalizeShellState(value: unknown): ShellState {
     drawerCollapsed: candidate.drawerCollapsed !== false,
     whatsappTheme: candidate.whatsappTheme === "system" ? "system" : "whatsapp",
     notificationsEnabled: candidate.notificationsEnabled !== false,
+    microphoneEnabled: candidate.microphoneEnabled !== false,
+    cameraEnabled: candidate.cameraEnabled !== false,
     signOutOnQuit: candidate.signOutOnQuit === true,
     colorsPinned: candidate.colorsPinned === true,
     shortcuts: normalizeShortcutPreferences(candidate.shortcuts),

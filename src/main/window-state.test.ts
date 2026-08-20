@@ -2,6 +2,7 @@ import * as assert from "node:assert/strict";
 import { test } from "node:test";
 import { isWindowPresented, resolveToggleAction } from "./window-state";
 import { parseUnreadCount } from "./unread-count";
+import { isMediaAccessAllowed } from "./media-permissions";
 
 function fakeWindow(
   options: { destroyed?: boolean; minimized?: boolean; visible?: boolean } = {},
@@ -31,4 +32,26 @@ test("unread count parses Chromium's WhatsApp title formats", () => {
   assert.equal(parseUnreadCount("WhatsApp (12)"), 12);
   assert.equal(parseUnreadCount("(99+) WhatsApp"), 100);
   assert.equal(parseUnreadCount("WhatsApp"), 0);
+});
+
+test("media permissions gate microphone and camera independently", () => {
+  const all = { microphoneEnabled: true, cameraEnabled: true };
+  const microphoneOnly = { microphoneEnabled: true, cameraEnabled: false };
+  const cameraOnly = { microphoneEnabled: false, cameraEnabled: true };
+
+  assert.equal(isMediaAccessAllowed(all, ["audio"]), true);
+  assert.equal(isMediaAccessAllowed(all, ["video"]), true);
+  assert.equal(isMediaAccessAllowed(all, ["audio", "video"]), true);
+
+  assert.equal(isMediaAccessAllowed(microphoneOnly, ["audio"]), true);
+  assert.equal(isMediaAccessAllowed(microphoneOnly, ["video"]), false);
+  assert.equal(isMediaAccessAllowed(microphoneOnly, ["audio", "video"]), false);
+
+  assert.equal(isMediaAccessAllowed(cameraOnly, ["audio"]), false);
+  assert.equal(isMediaAccessAllowed(cameraOnly, ["video"]), true);
+
+  assert.equal(isMediaAccessAllowed(all, []), true);
+  assert.equal(isMediaAccessAllowed(microphoneOnly, []), false);
+  assert.equal(isMediaAccessAllowed(all, ["unknown"]), true);
+  assert.equal(isMediaAccessAllowed(microphoneOnly, ["unknown"]), false);
 });
