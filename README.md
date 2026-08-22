@@ -136,6 +136,8 @@ The WhatsApp Web surface runs with Electron security boundaries enabled:
 - sandboxing where applicable
 - a persistent partition for the WhatsApp session
 - a narrow preload and IPC boundary
+- separate microphone and camera controls in Settings; both stay enabled by
+  default to preserve voice messages and calls for existing users
 
 PrettyZap stores only its own shell preferences in
 `$XDG_CONFIG_HOME/prettyzap/shell-state.json` or
