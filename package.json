@@ -11,7 +11,7 @@
     "dev": "npm run build && concurrently -k \"tsc -p tsconfig.main.json --watch\" \"electron .\"",
     "typecheck": "tsc -p tsconfig.main.json --noEmit",
     "build": "npm run typecheck && tsc -p tsconfig.main.json",
-    "test": "npm run build && node --test dist/main/window-state.test.js dist/main/palette.test.js",
+    "test": "npm run build && node --test dist/main/window-state.test.js dist/main/palette.test.js dist/main/omarchy-font.test.js",
     "start": "electron .",
     "package:linux": "npm run build && electron-builder --linux"
   },

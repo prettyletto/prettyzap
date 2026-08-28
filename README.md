@@ -31,6 +31,24 @@ without reloading the conversation or changing its layout.
 
 [Watch the theming demo](assets/theming.mp4)
 
+### Font size
+
+On Omarchy, WhatsApp follows the desktop's type scale. Omarchy keeps that in
+`shell.toml` under `[font] base-size` — the rem root its own shell derives every
+font token from — and PrettyZap reuses Omarchy's ratio (`base-size / 12`) as the
+WhatsApp zoom factor. Shrink the shell to `base-size = 10` and WhatsApp follows
+to 83%, live, with no restart.
+
+Both layers Omarchy merges are read, the user's winning, matching Omarchy's own
+precedence:
+
+1. `~/.local/state/omarchy/current/theme/shell.toml` (the active theme)
+2. `~/.config/omarchy/shell.toml` (your override)
+
+To take control instead, tick **Keep this zoom even when the Omarchy font size
+changes** in Settings → Appearance and set the zoom yourself. Off Omarchy the
+zoom field is simply a manual setting, defaulting to 100%.
+
 ### Settings and widget controls
 
 Use the desktop widget to open or hide PrettyZap and access its settings and

@@ -2,6 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { app } from "electron";
 
+import { MAX_ZOOM_FACTOR, MIN_ZOOM_FACTOR } from "./omarchy-font";
+
 export interface ShellState {
   width: number;
   height: number;
@@ -18,6 +20,10 @@ export interface ShellState {
   signOutOnQuit: boolean;
   /** Keep the custom palette even when the Omarchy theme changes. */
   colorsPinned: boolean;
+  /** Keep `zoomFactor` even when Omarchy's `[font] base-size` changes. */
+  fontPinned: boolean;
+  /** WhatsApp web-view zoom. Followed from Omarchy unless `fontPinned`. */
+  zoomFactor: number;
   shortcuts: ShortcutPreferences;
 }
 
@@ -45,6 +51,8 @@ export const DEFAULT_SHELL_STATE: ShellState = {
   cameraEnabled: true,
   signOutOnQuit: false,
   colorsPinned: false,
+  fontPinned: false,
+  zoomFactor: 1,
   shortcuts: {
     toggleDrawer: "Ctrl+L",
     search: "Ctrl+/",
@@ -108,8 +116,19 @@ export function normalizeShellState(value: unknown): ShellState {
     cameraEnabled: candidate.cameraEnabled !== false,
     signOutOnQuit: candidate.signOutOnQuit === true,
     colorsPinned: candidate.colorsPinned === true,
+    fontPinned: candidate.fontPinned === true,
+    zoomFactor: normalizeZoomFactor(candidate.zoomFactor),
     shortcuts: normalizeShortcutPreferences(candidate.shortcuts),
   };
+}
+
+/**
+ * Clamp a persisted zoom factor into Chromium's accepted range. Anything
+ * unusable falls back to 1 rather than throwing later in setZoomFactor.
+ */
+export function normalizeZoomFactor(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_SHELL_STATE.zoomFactor;
+  return Math.min(MAX_ZOOM_FACTOR, Math.max(MIN_ZOOM_FACTOR, value));
 }
 
 export function normalizeShortcutPreferences(value: unknown): ShortcutPreferences {

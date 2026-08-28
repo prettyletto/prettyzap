@@ -10,6 +10,7 @@ import {
   shell,
   WebContentsView,
 } from "electron";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { installWhatsAppDrawer } from "../features/whatsapp-drawer";
 import { installWhatsAppTheme } from "../features/whatsapp-theme";
@@ -43,6 +44,12 @@ import {
   writePrettyZapPalette,
   type PaletteSnapshot,
 } from "./palette";
+import {
+  clampZoomFactor,
+  omarchyZoomFactor,
+  readOmarchyFontBaseSize,
+  resolveFontSources,
+} from "./omarchy-font";
 
 app.setName("PrettyZap");
 
@@ -304,8 +311,103 @@ async function quitPrettyZap(): Promise<void> {
   app.quit();
 }
 
-function settingsSnapshot(): Pick<ShellState, "drawerCollapsed" | "whatsappTheme" | "notificationsEnabled" | "badgeEnabled" | "microphoneEnabled" | "cameraEnabled" | "shortcuts" | "signOutOnQuit"> {
+/**
+ * The zoom the WhatsApp view should be at: Omarchy's font scale while we are
+ * following it, otherwise the user's own pinned value.
+ */
+function effectiveZoomFactor(): number {
+  if (!shellState.fontPinned) {
+    const fromOmarchy = omarchyZoomFactor();
+    if (fromOmarchy !== undefined) return fromOmarchy;
+  }
+  return clampZoomFactor(shellState.zoomFactor);
+}
+
+function applyZoomFactor(): void {
+  if (!whatsappWebContents || whatsappWebContents.isDestroyed()) return;
+  const zoom = effectiveZoomFactor();
+  try {
+    if (Math.abs(whatsappWebContents.getZoomFactor() - zoom) < 0.001) return;
+    whatsappWebContents.setZoomFactor(zoom);
+  } catch (error: unknown) {
+    console.warn("PrettyZap could not apply zoom factor", zoom, error);
+  }
+}
+
+let fontWatchers: fs.FSWatcher[] = [];
+let fontPollTimer: NodeJS.Timeout | undefined;
+let lastFontState: string | undefined;
+let fontRefreshTimer: NodeJS.Timeout | undefined;
+
+const scheduleZoomRefresh = (): void => {
+  if (fontRefreshTimer) clearTimeout(fontRefreshTimer);
+  fontRefreshTimer = setTimeout(() => {
+    fontRefreshTimer = undefined;
+    applyZoomFactor();
+  }, 150);
+};
+
+/**
+ * Track Omarchy's `[font] base-size` the same way the theme feature tracks
+ * colors.toml: watch each layer's directory, plus a 1s content poll so a
+ * directory swap during a theme change cannot strand a dead fs.watch.
+ */
+function startOmarchyFontFollow(): void {
+  stopOmarchyFontFollow();
+  const sources = resolveFontSources();
+  for (const source of sources) {
+    try {
+      fontWatchers.push(fs.watch(source.watchDir, { persistent: false }, (_event, filename) => {
+        // The theme directory is replaced wholesale on a theme switch, so a
+        // null filename still has to count.
+        if (typeof filename === "string" && filename !== source.fileName) return;
+        scheduleZoomRefresh();
+      }));
+    } catch (error: unknown) {
+      console.warn("Unable to watch the Omarchy font size at", source.watchDir, error);
+    }
+  }
+  const poll = (): void => {
+    const base = readOmarchyFontBaseSize();
+    const state = base === undefined ? "" : String(base);
+    if (lastFontState === undefined) {
+      lastFontState = state;
+      return;
+    }
+    if (state !== lastFontState) {
+      lastFontState = state;
+      scheduleZoomRefresh();
+    }
+  };
+  poll();
+  fontPollTimer = setInterval(poll, 1_000);
+  fontPollTimer.unref();
+}
+
+function stopOmarchyFontFollow(): void {
+  for (const watcher of fontWatchers) {
+    try {
+      watcher.close();
+    } catch {
+      // already gone
+    }
+  }
+  fontWatchers = [];
+  if (fontPollTimer) clearInterval(fontPollTimer);
+  fontPollTimer = undefined;
+  if (fontRefreshTimer) clearTimeout(fontRefreshTimer);
+  fontRefreshTimer = undefined;
+  lastFontState = undefined;
+}
+
+function settingsSnapshot(): Pick<ShellState, "drawerCollapsed" | "whatsappTheme" | "notificationsEnabled" | "badgeEnabled" | "microphoneEnabled" | "cameraEnabled" | "shortcuts" | "signOutOnQuit" | "fontPinned" | "zoomFactor">
+  & { omarchyFont: boolean; omarchyBaseSize: number | undefined } {
+  const omarchyBaseSize = readOmarchyFontBaseSize();
   return {
+    fontPinned: shellState.fontPinned,
+    zoomFactor: effectiveZoomFactor(),
+    omarchyFont: omarchyZoomFactor() !== undefined,
+    omarchyBaseSize,
     drawerCollapsed: shellState.drawerCollapsed,
     whatsappTheme: shellState.whatsappTheme,
     notificationsEnabled: shellState.notificationsEnabled,
@@ -322,7 +424,7 @@ function settingsPage(): string {
 <style>
 :root{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#0e1420;color:#e8edf5}*{box-sizing:border-box}html,body{height:100%}body{margin:0;display:flex;flex-direction:column;overflow:hidden;background:radial-gradient(1100px 560px at 85% -10%,#1c3044 0%,#101722 55%,#0e1420 100%)}main{flex:1;min-height:0;overflow-y:auto;width:min(100%,760px);margin:0 auto;padding:clamp(18px,4vw,36px) clamp(16px,4vw,34px) 14px}main::-webkit-scrollbar{width:10px}main::-webkit-scrollbar-track{background:transparent}main::-webkit-scrollbar-thumb{background:#2b3b50;border-radius:6px;border:2px solid transparent;background-clip:content-box}main::-webkit-scrollbar-thumb:hover{background:#3d5270;border:2px solid transparent;background-clip:content-box}h1{font-size:clamp(24px,5vw,30px);margin:0 0 6px;letter-spacing:-.01em}p{color:#8fa0b8;margin:0 0 26px;line-height:1.5;max-width:60ch}.card{background:linear-gradient(180deg,#16202e,#141d2a);border:1px solid #263448;border-radius:14px;padding:clamp(16px,3vw,24px);margin:16px 0;box-shadow:0 12px 32px rgba(4,10,20,.35)}h2{font-size:13px;margin:0 0 18px;color:#79d5b0;letter-spacing:.12em;text-transform:uppercase;font-weight:600}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 20px}label{display:grid;min-width:0;gap:8px;color:#c6d0dc;font-size:13px}input{width:100%;min-width:0;border:1px solid #2c3c52;border-radius:8px;background:#0d1520;color:#f2f6fa;padding:11px 12px;font:inherit;transition:border-color .15s ease,box-shadow .15s ease}input:hover{border-color:#4a6079}input:focus{outline:none;border-color:#79d5b0;box-shadow:0 0 0 3px rgba(121,213,176,.18)}.check{display:flex;grid-template-columns:none;align-items:center;gap:12px;margin:14px 0}.check input{width:auto;accent-color:#79d5b0}.hint{font-size:12px;color:#77879d;margin:10px 0 0;line-height:1.5}.actions{flex:none;display:flex;align-items:center;gap:16px;border-top:1px solid #22303f;background:rgba(14,20,32,.88);backdrop-filter:blur(14px);padding:14px clamp(16px,4vw,34px)}#status{flex:1;min-width:0;max-width:460px;min-height:36px;display:flex;align-items:center;padding:8px 12px;border-radius:8px;font-size:12px}#status.success{color:#a5f0d0;background:#173b35;border:1px solid #286b5d}#status.error{color:#ffb7b7;background:#45252b;border:1px solid #85434d}.buttons{display:flex;gap:10px;flex:none}button{border:1px solid #33455c;border-radius:9px;padding:10px 18px;background:#1c2b3e;color:#dce7f1;font:inherit;font-weight:500;cursor:pointer;transition:background .15s ease,border-color .15s ease,transform .08s ease}button:hover{background:#27394f;border-color:#5e7893}button:focus-visible{outline:2px solid #79d5b0;outline-offset:2px}button:active{transform:translateY(1px)}button.primary{background:#79d5b0;border-color:#79d5b0;color:#0f241e;font-weight:600;box-shadow:0 2px 10px rgba(121,213,176,.25)}button.primary:hover{background:#8fe2bf;border-color:#8fe2bf}button.primary:active{background:#62bd9a;box-shadow:none}button:disabled{cursor:wait;opacity:.65}.color-row{display:flex;align-items:center;gap:8px;min-width:0}.color-row input[type="color"]{width:44px;height:36px;padding:3px;flex:none;cursor:pointer;border-radius:8px}.color-row input[type="text"]{flex:1;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;text-transform:lowercase}select{width:100%;min-width:0;border:1px solid #2c3c52;border-radius:8px;background:#0d1520;color:#f2f6fa;padding:11px 12px;font:inherit;transition:border-color .15s ease,box-shadow .15s ease}select:hover{border-color:#4a6079}select:focus{outline:none;border-color:#79d5b0;box-shadow:0 0 0 3px rgba(121,213,176,.18)}select:disabled,input:disabled{opacity:.55;cursor:not-allowed}.inline-actions{display:flex;gap:10px;align-items:center;margin-top:16px}@media(max-width:560px){.grid{grid-template-columns:1fr}.buttons button{flex:1}.card{margin:12px 0}}
 </style></head><body><main><h1>PrettyZap Settings</h1><p>Customize shortcuts and the way PrettyZap behaves around WhatsApp Web.</p>
-<section class="card"><h2>Appearance</h2><label class="check"><input id="systemTheme" type="checkbox"> Apply the system theme to WhatsApp</label><div class="hint">When disabled, WhatsApp keeps its own appearance. Changes apply immediately.</div></section>
+<section class="card"><h2>Appearance</h2><label class="check"><input id="systemTheme" type="checkbox"> Apply the system theme to WhatsApp</label><div class="hint">When disabled, WhatsApp keeps its own appearance. Changes apply immediately.</div><label class="check" id="fontPinWrap" style="display:none;margin:14px 0 4px"><input id="fontPin" type="checkbox"> Keep this zoom even when the Omarchy font size changes</label><label style="margin-top:12px;max-width:220px">Zoom (%)<input id="zoomFactor" type="number" min="25" max="500" step="5"></label><div class="hint" id="zoomNote"></div></section>
 <section class="card" id="colors-card"><h2>Colors</h2><div class="hint" id="colorsNote"></div><label class="check" id="colorsPinWrap" style="display:none;margin:14px 0 4px"><input id="colorsPin" type="checkbox"> Keep these colors even when the Omarchy theme changes</label><div class="grid">
 <label>Mode<select id="paletteMode"><option value="dark">Dark</option><option value="light">Light</option></select></label>
 <label>Background<span class="color-row"><input type="color" data-color-key="background" value="#121212"><input type="text" data-color-hex="background" value="#121212" spellcheck="false" autocomplete="off"></span></label>
@@ -353,7 +455,7 @@ function settingsPage(): string {
 <label>Tab 7<input type="text" data-key="navigation.7" autocomplete="off"></label><label>Tab 8<input type="text" data-key="navigation.8" autocomplete="off"></label>
 </div><div class="hint">Click a shortcut field, then press the desired combination. For example: Ctrl+Shift+A, Ctrl+1, or Cmd+K.</div></section>
 </main><footer class="actions"><div id="status" role="status" aria-live="polite"></div><div class="buttons"><button id="cancel">Close</button><button class="primary" id="save">Save settings</button></div></footer>
-<script>const api=window.prettyZapSettings;const fields=[...document.querySelectorAll('[data-key]')];const read=(shortcuts,key)=>key.split('.').reduce((value,part)=>value?.[part],shortcuts);const setStatus=(message,type)=>{status.textContent=message;status.className=type};const collect=()=>{const shortcuts={};fields.forEach(e=>{const parts=e.dataset.key.split('.');if(parts.length===1)shortcuts[parts[0]]=e.value.trim();else{shortcuts[parts[0]]??={};shortcuts[parts[0]][parts[1]]=e.value.trim()}});return shortcuts};const prettyKey=e=>{if(e.key===' ')return 'Space';if(e.key==='Escape')return 'Escape';if(e.key==='Enter')return 'Enter';if(e.key.length===1)return e.key.toUpperCase();return e.key};fields.forEach(field=>field.addEventListener('keydown',e=>{if(['Tab','Shift','Control','Alt','Meta'].includes(e.key))return;e.preventDefault();const parts=[];if(e.ctrlKey)parts.push('Ctrl');if(e.metaKey)parts.push('Cmd');if(e.altKey)parts.push('Alt');if(e.shiftKey)parts.push('Shift');parts.push(prettyKey(e));field.value=parts.join('+')}));api.get().then(s=>{fields.forEach(e=>e.value=read(s.shortcuts,e.dataset.key)||'');systemTheme.checked=s.whatsappTheme==='system';drawerCollapsed.checked=s.drawerCollapsed;signOutOnQuit.checked=s.signOutOnQuit===true}).catch(()=>setStatus('Unable to load settings','error'));save.onclick=async()=>{save.disabled=true;save.textContent='Saving…';setStatus('Applying changes…','success');try{const saved=await api.update({shortcuts:collect(),whatsappTheme:systemTheme.checked?'system':'whatsapp',drawerCollapsed:drawerCollapsed.checked,signOutOnQuit:signOutOnQuit.checked});fields.forEach(e=>e.value=read(saved.shortcuts,e.dataset.key)||'');setStatus('✓ Settings saved and applied','success')}catch(error){setStatus('Could not save settings','error')}finally{save.disabled=false;save.textContent='Save settings'}};cancel.onclick=()=>api.close();
+<script>const api=window.prettyZapSettings;const fields=[...document.querySelectorAll('[data-key]')];const read=(shortcuts,key)=>key.split('.').reduce((value,part)=>value?.[part],shortcuts);const setStatus=(message,type)=>{status.textContent=message;status.className=type};const collect=()=>{const shortcuts={};fields.forEach(e=>{const parts=e.dataset.key.split('.');if(parts.length===1)shortcuts[parts[0]]=e.value.trim();else{shortcuts[parts[0]]??={};shortcuts[parts[0]][parts[1]]=e.value.trim()}});return shortcuts};const prettyKey=e=>{if(e.key===' ')return 'Space';if(e.key==='Escape')return 'Escape';if(e.key==='Enter')return 'Enter';if(e.key.length===1)return e.key.toUpperCase();return e.key};fields.forEach(field=>field.addEventListener('keydown',e=>{if(['Tab','Shift','Control','Alt','Meta'].includes(e.key))return;e.preventDefault();const parts=[];if(e.ctrlKey)parts.push('Ctrl');if(e.metaKey)parts.push('Cmd');if(e.altKey)parts.push('Alt');if(e.shiftKey)parts.push('Shift');parts.push(prettyKey(e));field.value=parts.join('+')}));api.get().then(s=>{fields.forEach(e=>e.value=read(s.shortcuts,e.dataset.key)||'');systemTheme.checked=s.whatsappTheme==='system';drawerCollapsed.checked=s.drawerCollapsed;signOutOnQuit.checked=s.signOutOnQuit===true;applyZoomState(s)}).catch(()=>setStatus('Unable to load settings','error'));save.onclick=async()=>{save.disabled=true;save.textContent='Saving…';setStatus('Applying changes…','success');try{const saved=await api.update({shortcuts:collect(),whatsappTheme:systemTheme.checked?'system':'whatsapp',drawerCollapsed:drawerCollapsed.checked,signOutOnQuit:signOutOnQuit.checked,fontPinned:fontPin.checked,zoomFactor:(Number(zoomField.value)||100)/100});applyZoomState(saved);fields.forEach(e=>e.value=read(saved.shortcuts,e.dataset.key)||'');setStatus('✓ Settings saved and applied','success')}catch(error){setStatus('Could not save settings','error')}finally{save.disabled=false;save.textContent='Save settings'}};cancel.onclick=()=>api.close();
 const colorFields=[...document.querySelectorAll('[data-color-key]')];
 const hexFields=[...document.querySelectorAll('[data-color-hex]')];
 const modeSelect=document.getElementById('paletteMode');
@@ -364,7 +466,7 @@ const resetColors=document.getElementById('resetColors');
 let colorsEditable=true;let paletteModeValue='dark';let paletteColors={};let paletteSaveTimer;
 const setColorsEditable=(editable)=>{colorsEditable=editable;modeSelect.disabled=!editable;colorFields.forEach(f=>f.disabled=!editable);hexFields.forEach(f=>f.disabled=!editable);resetColors.disabled=!editable};
 const applyPalette=(p)=>{paletteModeValue=p.mode;paletteColors={...p.colors};modeSelect.value=p.mode;colorsPinWrap.style.display=p.omarchy?'':'none';colorsPin.checked=p.pinned===true;colorsNote.textContent=p.omarchy?(p.pinned?'Your custom colors override the Omarchy theme — theme changes no longer affect WhatsApp.':'Following your active Omarchy theme. Enable “Keep these colors…” to take control.'):'Custom colors for this device, used by the System theme.';colorFields.forEach(f=>{const v=paletteColors[f.dataset.colorKey]||'#000000';f.value=v;const hex=hexFields.find(h=>h.dataset.colorHex===f.dataset.colorKey);if(hex)hex.value=v.toLowerCase()});setColorsEditable(p.kind==='custom')};
-const refreshAppearanceCheckbox=()=>api.get().then(s=>{systemTheme.checked=s.whatsappTheme==='system'}).catch(()=>{});
+const fontPin=document.getElementById('fontPin');const fontPinWrap=document.getElementById('fontPinWrap');const zoomField=document.getElementById('zoomFactor');const zoomNote=document.getElementById('zoomNote');const applyZoomState=(s)=>{fontPin.checked=s.fontPinned===true;zoomField.value=Math.round((s.zoomFactor||1)*100);fontPinWrap.style.display=s.omarchyFont?'':'none';zoomField.disabled=s.omarchyFont&&s.fontPinned!==true;zoomNote.textContent=s.omarchyFont?(s.fontPinned?'Your zoom overrides Omarchy — font-size changes no longer affect WhatsApp.':'Following Omarchy\u2019s font size'+(s.omarchyBaseSize?' (base-size '+s.omarchyBaseSize+')':'')+'. Enable \u201cKeep this zoom\u2026\u201d to set it yourself.'):'Zoom applies to the WhatsApp view only.'};const refreshAppearanceCheckbox=()=>api.get().then(s=>{systemTheme.checked=s.whatsappTheme==='system'}).catch(()=>{});
 const pushPalette=()=>{clearTimeout(paletteSaveTimer);paletteSaveTimer=setTimeout(()=>{api.setPalette({mode:paletteModeValue,colors:paletteColors}).then(p=>{applyPalette(p);setStatus('Colors saved and applied','success');return refreshAppearanceCheckbox()}).catch(()=>setStatus('Could not save colors','error'))},300)};
 colorFields.forEach(f=>f.addEventListener('input',()=>{const v=f.value.toLowerCase();paletteColors[f.dataset.colorKey]=v;const hex=hexFields.find(h=>h.dataset.colorHex===f.dataset.colorKey);if(hex)hex.value=v;pushPalette()}));
 hexFields.forEach(h=>h.addEventListener('change',()=>{const v=h.value.trim().toLowerCase();if(!/^#[0-9a-f]{6}$/.test(v)){h.value=(paletteColors[h.dataset.colorHex]||'').toLowerCase();setStatus('Enter a color like #1a1b26','error');return}paletteColors[h.dataset.colorHex]=v;const cf=colorFields.find(f=>f.dataset.colorKey===h.dataset.colorHex);if(cf)cf.value=v;pushPalette()}));
@@ -764,6 +866,8 @@ function createWindow(): void {
 
   prettyZapWindow = window;
   whatsappWebContents = whatsappView.webContents;
+  applyZoomFactor();
+  startOmarchyFontFollow();
   const whatsappSession = session.fromPartition(WHATSAPP_PARTITION);
   // WhatsApp Web is remote, untrusted content. Grant only the permissions its
   // actual features need (notifications are user-gated); deny everything else
@@ -815,6 +919,8 @@ function createWindow(): void {
     updateUnreadCount(parseUnreadCount(title));
   });
   whatsappView.webContents.on("did-finish-load", () => {
+    // Chromium resets zoom per navigation, so re-assert it on every load.
+    applyZoomFactor();
     updateUnreadCount(parseUnreadCount(whatsappView.webContents.getTitle()));
     applyNotificationPolicy();
     if (rendererRecoveryResetTimer) clearTimeout(rendererRecoveryResetTimer);
@@ -946,6 +1052,15 @@ ipcMain.handle(SETTINGS_UPDATE_CHANNEL, (event, value: unknown) => {
   if (typeof candidate.signOutOnQuit === "boolean") {
     shellState.signOutOnQuit = candidate.signOutOnQuit;
   }
+  if (typeof candidate.fontPinned === "boolean") {
+    // Pinning adopts whatever is on screen now, so the view does not jump.
+    if (candidate.fontPinned && !shellState.fontPinned) shellState.zoomFactor = effectiveZoomFactor();
+    shellState.fontPinned = candidate.fontPinned;
+  }
+  if (typeof candidate.zoomFactor === "number") {
+    shellState.zoomFactor = clampZoomFactor(candidate.zoomFactor);
+  }
+  applyZoomFactor();
   if (candidate.shortcuts && typeof candidate.shortcuts === "object") {
     Object.assign(shellState.shortcuts, normalizeShortcutPreferences(candidate.shortcuts));
   }
