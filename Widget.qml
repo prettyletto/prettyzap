@@ -59,6 +59,40 @@ BarWidget {
   // PrettyZap brand mark and the WhatsApp glyph.
   property bool showBrand: false
 
+  // How unread messages are surfaced. "count" draws the numeric badge,
+  // "highlight" recolours the glyph and its halo with the bar's alert colour
+  // and draws nothing extra, "none" leaves the icon alone. Anything
+  // unrecognised falls back to the badge, which is the historical behaviour.
+  readonly property string badgeMode: {
+    var v = String(setting("badge", "Count")).toLowerCase()
+    return (v === "highlight" || v === "none") ? v : "count"
+  }
+  readonly property bool hasUnread: data.unreadCount > 0
+  readonly property bool highlightActive: root.badgeMode === "highlight" && root.hasUnread
+  readonly property color alertColor: root.bar ? root.bar.urgent : Color.urgent
+  readonly property string badgeLabel:
+    root.badgeMode === "highlight" ? "Highlight icon"
+    : root.badgeMode === "none" ? "None" : "Count"
+
+  function cycleBadge() {
+    var next = root.badgeMode === "count" ? "Highlight"
+      : root.badgeMode === "highlight" ? "None" : "Count"
+    root.persist("badge", next)
+  }
+
+  // Write one setting back to this widget's entry in shell.json, preserving
+  // every other key on it.
+  function persist(key, value) {
+    var entry = { id: root.moduleName }
+    for (var k in root.settings) {
+      if (k !== "id") entry[k] = root.settings[k]
+    }
+    entry[key] = value
+    root.settings = entry
+    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
+      root.bar.shell.updateEntryInline(root.moduleName, entry)
+  }
+
   Image {
     visible: root.showBrand
     anchors.centerIn: parent
@@ -78,7 +112,7 @@ BarWidget {
     visible: !root.showBrand
     anchors.centerIn: parent
     text: "󰖣"
-    color: Color.accent
+    color: root.highlightActive ? root.alertColor : Color.accent
     opacity: data.running ? 0.16 : 0
     scale: 1.55
     font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -91,7 +125,7 @@ BarWidget {
     visible: !root.showBrand
     anchors.centerIn: parent
     text: "󰖣"
-    color: Color.accent
+    color: root.highlightActive ? root.alertColor : Color.accent
     opacity: data.running ? 0.28 : 0
     scale: 1.24
     font.family: root.bar ? root.bar.fontFamily : Style.font.family
@@ -104,7 +138,8 @@ BarWidget {
     visible: !root.showBrand
     anchors.centerIn: parent
     text: "󰖣"
-    color: data.running ? Color.accent : root.foreground
+    color: root.highlightActive ? root.alertColor
+      : (data.running ? Color.accent : root.foreground)
     font.family: root.bar ? root.bar.fontFamily : Style.font.family
     font.pixelSize: Style.bar.iconFont + Style.space(2)
     horizontalAlignment: Text.AlignHCenter
@@ -112,9 +147,14 @@ BarWidget {
   }
 
   Rectangle {
-    visible: data.badgeEnabled && data.unreadCount > 0
-    anchors.top: parent.top
-    anchors.right: parent.right
+    visible: data.badgeEnabled && root.hasUnread && root.badgeMode === "count"
+    // Pin the badge to the glyph, not the bar. The glyph is centred, so
+    // anchoring to parent.top detaches the badge on any bar taller than the
+    // 26px default -- it drifts upward and stops reading as part of the icon.
+    anchors.horizontalCenter: parent.horizontalCenter
+    anchors.horizontalCenterOffset: Style.space(8)
+    anchors.verticalCenter: parent.verticalCenter
+    anchors.verticalCenterOffset: -Style.space(7)
     width: data.unreadCount >= 100
       ? Style.space(24)
       : data.unreadCount >= 10 ? Style.space(17) : Style.space(14)
@@ -273,6 +313,15 @@ BarWidget {
         foreground: root.foreground
         enabled: data.notificationControlReady
         onClicked: { data.toggleNotifications(); root.close() }
+      }
+
+      Button {
+        width: parent.width
+        text: "Unread: " + root.badgeLabel
+        iconText: "󰎟"
+        leftAlign: true
+        foreground: root.foreground
+        onClicked: root.cycleBadge()
       }
 
       Button {
