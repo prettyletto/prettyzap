@@ -741,7 +741,9 @@ function createWindow(): void {
   const window = new BrowserWindow({
     width: shellState.width,
     height: shellState.height,
-    minWidth: 720,
+    // Low enough for half- and third-width tiles; the drawer auto-collapses
+    // and the conversation reflows to fit.
+    minWidth: 360,
     minHeight: 520,
     title: "PrettyZap",
     autoHideMenuBar: true,

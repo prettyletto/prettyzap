@@ -4,6 +4,9 @@
  */
 export const whatsappDrawerSelectors = {
   applicationRoot: '[data-testid="wa-web-main-screen"]',
+  // The flex row holding the chat list and conversation. WhatsApp gives it a
+  // fixed min-width (748px at the time of writing) sized for both panes.
+  layoutRow: '[data-testid="wa-web-main-screen"] > div.two',
   navigationRail: 'header[data-testid="chatlist-header"]',
   chatListHeader: 'header[data-testid="chatlist-header"]',
   // WhatsApp keeps #side inside a flex pane without a dedicated test id.

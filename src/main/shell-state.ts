@@ -77,7 +77,7 @@ function defaultShellState(): ShellState {
   };
 }
 
-const MIN_WIDTH = 720;
+const MIN_WIDTH = 360;
 const MIN_HEIGHT = 520;
 const MAX_DIMENSION = 10_000;
 

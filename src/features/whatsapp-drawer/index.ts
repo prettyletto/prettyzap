@@ -8,6 +8,9 @@ const TOGGLE_ID = "prettyzap-whatsapp-drawer-toggle";
 const DRAWER_STATE_EVENT = "prettyzap-drawer-state";
 const STYLE_ID = "prettyzap-whatsapp-drawer-style";
 const CHAT_CYCLE_IDLE_MS = 700;
+// Below this viewport width the chat list and conversation no longer fit
+// side by side (e.g. a half-screen tile), so the drawer collapses on its own.
+const AUTO_COLLAPSE_WIDTH = 1000;
 const NAVIGATION_SHORTCUTS = {
   "1": "chats",
   "2": "calls",
@@ -334,6 +337,12 @@ function createCycleChatsScript(direction: "forward" | "backward"): string {
 
 const drawerRoot = '[data-testid="wa-web-main-screen"][data-prettyzap-drawer-collapsed="true"]';
 const drawerStyle = `
+  /* WhatsApp's fixed min-width on the pane row makes the page scroll
+     sideways in narrow windows, cropping the conversation's right edge. */
+  ${whatsappDrawerSelectors.layoutRow} {
+    min-width: 0 !important;
+  }
+
   /* Resize the actual sidebar flex pane; do not hide its descendants. */
   ${drawerRoot} ${whatsappDrawerSelectors.chatListShell} {
     flex: 0 0 0 !important;
@@ -456,9 +465,13 @@ function createDrawerScript(initialCollapsed: boolean): string {
       window.__prettyzapArchivedCycleResetInstalled = true;
     }
 
+    const autoCollapseWidth = ${JSON.stringify(AUTO_COLLAPSE_WIDTH)};
+    const isNarrow = () => window.innerWidth < autoCollapseWidth;
+
     const setCollapsed = (collapsed, notify = true) => {
       root.setAttribute("data-prettyzap-drawer-collapsed", String(collapsed));
       if (notify) {
+        window.__prettyzapDrawerPreferred = collapsed;
         document.dispatchEvent(new CustomEvent(${JSON.stringify(DRAWER_STATE_EVENT)}, {
           detail: { collapsed },
         }));
@@ -657,13 +670,36 @@ function createDrawerScript(initialCollapsed: boolean): string {
       button.addEventListener("click", () => {
         root.removeAttribute("data-prettyzap-picker-drawer-assisted");
         const collapsed = root.getAttribute("data-prettyzap-drawer-collapsed") === "true";
-        setCollapsed(!collapsed);
+        // In a narrow window, opening the list is a temporary peek; keep the
+        // saved preference for when the window is wide again.
+        setCollapsed(!collapsed, !isNarrow());
       });
       rail.appendChild(button);
     }
 
     const existingCollapsed = root.getAttribute("data-prettyzap-drawer-collapsed");
-    setCollapsed(existingCollapsed === null ? ${JSON.stringify(initialCollapsed)} : existingCollapsed === "true");
+    if (typeof window.__prettyzapDrawerPreferred !== "boolean") {
+      window.__prettyzapDrawerPreferred = existingCollapsed === null
+        ? ${JSON.stringify(initialCollapsed)}
+        : existingCollapsed === "true";
+    }
+    setCollapsed(isNarrow() || window.__prettyzapDrawerPreferred, false);
+
+    if (!window.__prettyzapAutoCollapseInstalled) {
+      let wasNarrow = isNarrow();
+      let resizeFrame;
+      window.addEventListener("resize", () => {
+        window.cancelAnimationFrame(resizeFrame);
+        resizeFrame = window.requestAnimationFrame(() => {
+          const narrow = isNarrow();
+          if (narrow === wasNarrow) return;
+          wasNarrow = narrow;
+          root.removeAttribute("data-prettyzap-picker-drawer-assisted");
+          setCollapsed(narrow || window.__prettyzapDrawerPreferred, false);
+        });
+      });
+      window.__prettyzapAutoCollapseInstalled = true;
+    }
     return {
       installed: true,
       collapsed: root.getAttribute("data-prettyzap-drawer-collapsed"),
